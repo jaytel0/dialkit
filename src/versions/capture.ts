@@ -67,11 +67,15 @@ export async function rasterizeViewport({ ignore, scale }: CaptureOptions): Prom
       copy.replaceWith(img);
       continue;
     }
+    // Off-screen images and backgrounds aren't in the frame; inlining them
+    // anyway means downloading and decoding the whole page's media.
+    const visible = onScreen(source, width, height);
     if (source instanceof HTMLImageElement && copy instanceof HTMLImageElement) {
       const src = source.currentSrc || source.src;
       copy.removeAttribute('srcset');
       copy.removeAttribute('loading');
-      if (src && !src.startsWith('data:')) {
+      if (!visible) copy.removeAttribute('src');
+      else if (src && !src.startsWith('data:')) {
         resources.push(toDataUrl(src).then((data) => { copy.src = data; }));
       }
     }
@@ -82,7 +86,7 @@ export async function rasterizeViewport({ ignore, scale }: CaptureOptions): Prom
 
     // Background images must be inlined too; the SVG can't fetch anything.
     const urls = [...css.matchAll(/url\("?([^")]+)"?\)/g)].map((m) => m[1]).filter((u) => !u.startsWith('data:'));
-    if (urls.length) {
+    if (urls.length && visible) {
       resources.push(Promise.all(urls.map(async (u) => [u, await toDataUrl(u)] as const)).then((pairs) => {
         for (const [u, data] of pairs) css = css.split(u).join(data);
         copy.setAttribute('style', css);
@@ -122,6 +126,11 @@ function collectPairs(source: Element, copy: Element, out: [Element, Element][])
   const a = source.children;
   const b = copy.children;
   for (let i = 0; i < a.length; i++) collectPairs(a[i], b[i], out);
+}
+
+function onScreen(el: Element, width: number, height: number): boolean {
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < height && r.left < width;
 }
 
 function inlineStyle(style: CSSStyleDeclaration): string {
